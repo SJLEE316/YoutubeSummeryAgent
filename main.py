@@ -156,16 +156,14 @@ def main():
         print(f"요약 대상 영상 발견: '{video_title}' ({video_id})")
 
         try:
+            ytt_api = YouTubeTranscriptApi()
             try:
-                transcript_list = YouTubeTranscriptApi.get_transcript(
-                    video_id, languages=["ko"]
-                )
+                transcript = ytt_api.fetch(video_id, languages=["ko"])
             except Exception:
-                transcript_list = YouTubeTranscriptApi.get_transcript(
-                    video_id, languages=["en"]
-                )
+                transcript = ytt_api.fetch(video_id, languages=["en"])
 
-            transcript_text = " ".join([item["text"] for item in transcript_list])
+            transcript_text = (" ".join([item.get('text', '') for item in transcript.fetch() if 'text' in item]) 
+              if hasattr(transcript, 'fetch') else " ".join([i['text'] for i in transcript]))
 
             summary = summarize_with_gemini(transcript_text, video_title)
             success = send_kakao_message(video_title, video_url, summary)
