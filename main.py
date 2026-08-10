@@ -1,8 +1,9 @@
 import os
+from django.core.serializers import json
 import requests
 import feedparser
-from youtube_transcript_api import YouTubeTranscriptApi
-import google.generativeai as genai
+from google import genai
+from googleapiclient.discovery import build
 
 # ==========================================
 # 1. 설정 및 환경 변수 로드
@@ -12,11 +13,11 @@ CHANNEL_IDS = [
 ]
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY")
 KAKAO_REFRESH_TOKEN = os.environ.get("KAKAO_REFRESH_TOKEN")
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
 # ==========================================
@@ -52,7 +53,7 @@ def send_kakao_message(title, url, summary):
 
     # -------------------------------------------------------------
     # [글자 수 세이프가드 적용]
-    # 카카오톡 메시지 본문 제한(약 1000자 안전 기준) 고려
+    # 카카오톡 메시지 본문 제한(약 1800자 안전 기준) 고려
     # -------------------------------------------------------------
     max_title_len = 50
     trimmed_title = title if len(title) <= max_title_len else title[:max_title_len] + "..."
@@ -60,7 +61,7 @@ def send_kakao_message(title, url, summary):
     # 기본 헤더/링크 구문 작성
     header_text = f"🎬 [유튜브 영상 요약]\n\n📌 제목: {trimmed_title}\n🔗 링크: {url}\n\n📝 AI 요약 내용:\n"
     
-    # 헤더 길이 포함 전체 950자 이내로 요약문 자르기
+    # 헤더 길이 포함 전체 1800자 이내로 요약문 자르기
     available_summary_len = 1800 - len(header_text)
     
     if len(summary) > available_summary_len:
@@ -78,8 +79,10 @@ def send_kakao_message(title, url, summary):
     }
 
     res = requests.post(
-        api_url, headers=headers, data={"template_object": str(template_object).replace("'", '"')}
-    )
+    api_url, 
+    headers=headers, 
+    data={"template_object": json.dumps(template_object, ensure_ascii=False)}
+)
 
     if res.status_code == 200 and res.json().get("result_code") == 0:
         print("카카오톡 메시지 전송 성공!")
@@ -88,34 +91,63 @@ def send_kakao_message(title, url, summary):
         print(f"카카오톡 전송 실패: {res.status_code}, {res.text}")
         return False
 
+def get_video_details_from_youtube_api(video_id):
+    """YouTube Data API v3를 활용하여 동영상 비디오 상세 정보를 가져옵니다."""
+    if not YOUTUBE_API_KEY:
+        return None
+    try:
+        youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+        request = youtube.videos().list(
+            part="snippet,contentDetails",
+            id=video_id
+        )
+        response = request.execute()
+        items = response.get("items", [])
+        if items:
+            snippet = items[0]["snippet"]
+            return {
+                "title": snippet.get("title", ""),
+                "description": snippet.get("description", ""),
+                "channelTitle": snippet.get("channelTitle", "")
+            }
+    except Exception as e:
+        print(f"YouTube Data API 호출 중 에러 발생: {e}")
+    return None
 
 # ==========================================
 # 3. Gemini 요약 함수
 # ==========================================
-def summarize_with_gemini(transcript_text, title):
+def summarize_with_gemini(video_title, video_url, video_description):
     """Gemini API를 활용하여 자막 요약, 추가 지식, 기술 면접 질문을 생성합니다."""
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    if not client:
+        raise ValueError("GEMINI_API_KEY가 설정되지 않았습니다.")
 
     prompt = f"""
     당신은 IT/기술 분야의 전문 컨설턴트이자 면접관입니다.
-    아래 유튜브 영상 "{title}"의 자막을 분석하여 정리해 주세요.
-    전체 응답 길이는 공백 포함 **600자 이내**로 짧고 명확하게 작성해 주세요.
+    아래 유튜브 기술 영상의 정보와 링크 내용을 기반으로 내용을 분석하고 핵심을 정리해 주세요.
+    전체 응답 길이는 공백 포함 **800자 이내**로 작성해 주세요.
+
+    [영상 정보]
+    - 제목: {video_title}
+    - URL: {video_url}
+    - 영상 설명란 내용:
+    {video_description[:3000]}
 
     [작성 양식]
     🎬 **[영상 핵심 요약]**
-    - 자막 기반 핵심 내용 2~3줄 요약
+    - 영상의 핵심 주제 및 주요 내용 2~3줄 요약
 
     💡 **[AI 추가 배경지식]**
-    - 영상 외 주제/용어 이해를 돕는 추가 배경 지식 1~2줄
+    - 영상 주제 및 용어 이해를 돕는 추가 기술 배경지식 1~2줄
 
     🎯 **[기술 면접 예상 질문]**
     - 이 기술 주제 관련 예상 면접 질문 1개와 1줄 힌트
-
-    [자막 내용]
-    {transcript_text[:10000]}
     """
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt
+    )
     return response.text.strip()
 
 
@@ -156,16 +188,14 @@ def main():
         print(f"요약 대상 영상 발견: '{video_title}' ({video_id})")
 
         try:
-            ytt_api = YouTubeTranscriptApi()
-            try:
-                transcript = ytt_api.fetch(video_id, languages=["ko"])
-            except Exception:
-                transcript = ytt_api.fetch(video_id, languages=["en"])
+            # YouTube Data API v3로 영상 데이터 추출
+            video_info = get_video_details_from_youtube_api(video_id)
+            description = video_info["description"] if video_info else target_entry.get("summary", "")
 
-            transcript_text = (" ".join([item.get('text', '') for item in transcript.fetch() if 'text' in item]) 
-              if hasattr(transcript, 'fetch') else " ".join([i['text'] for i in transcript]))
-
-            summary = summarize_with_gemini(transcript_text, video_title)
+            # Gemini 2.5 활용 요약문 생성
+            summary = summarize_with_gemini(video_title, video_url, description)
+            
+            # 카카오톡 전송
             success = send_kakao_message(video_title, video_url, summary)
 
             if success:
