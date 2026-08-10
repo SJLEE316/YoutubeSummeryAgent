@@ -145,7 +145,7 @@ def summarize_with_gemini(video_title, video_url, video_description):
     """
 
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.0-flash-lite",
         contents=prompt
     )
     return response.text.strip()
