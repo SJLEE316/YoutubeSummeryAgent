@@ -1,5 +1,5 @@
 import os
-from django.core.serializers import json
+import json
 import requests
 import feedparser
 from google import genai
