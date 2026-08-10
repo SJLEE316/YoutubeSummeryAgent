@@ -1,0 +1,41 @@
+name: Daily YouTube Summarizer
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # 매일 한국시간 09:00
+  workflow_dispatch: # <- 수동 실행 버튼을 활성화하는 필수 옵션!
+  push:
+    branches:
+      - main
+      - master # master 브랜치 푸시도 감지하도록 추가
+
+jobs:
+  build-and-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v3
+
+      - name: Python 환경 설정
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: 라이브러리 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 요약 스크립트 실행
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
+        run: python main.py
+
+      - name: 처리된 영상 기록 저장 (Git Commit)
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add processed_videos.txt
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update processed videos" && git push)
