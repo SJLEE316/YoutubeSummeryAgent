@@ -129,8 +129,6 @@ def get_video_details_from_youtube_api(video_id):
 # 3. Gemini 요약 함수
 # ==========================================
 def summarize_with_gemini(video_title, video_url, video_description):
-    return MOCK_SUMMARY  # 테스트용 Mock 데이터 반환 (실제 배포 시 주석 처리)
-'''
     """Gemini API를 활용하여 자막 요약, 추가 지식, 기술 면접 질문을 생성합니다."""
     if not client:
         raise ValueError("GEMINI_API_KEY가 설정되지 않았습니다.")
@@ -162,7 +160,6 @@ def summarize_with_gemini(video_title, video_url, video_description):
         contents=prompt
     )
     return response.text.strip()
-'''
 
 # ==========================================
 # 4. 메인 실행 로직
