@@ -17,6 +17,17 @@ YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY")
 KAKAO_REFRESH_TOKEN = os.environ.get("KAKAO_REFRESH_TOKEN")
 
+# [테스트용 Mock 데이터]
+MOCK_SUMMARY = """🎬 **[영상 핵심 요약]**
+- OpenAI가 데이터 에이전트를 구축하며 적용한 핵심 Arch 패턴 및 학습 데이터 파이프라인 정리.
+- 에이전트 성능 향상을 위한 데이터 정제 자동화 및 피드백 루프 구조 소개.
+
+💡 **[AI 추가 배경지식]**
+- Data Agent는 비구조화된 데이터를 LLM이 학습/추론하기 쉬운 형태로 자동 변환해 주는 AI 파이프라인 시스템입니다.
+
+🎯 **[기술 면접 예상 질문]**
+- Q. LLM 에이전트 설계 시 데이터 품질을 자동 검증하기 위한 평가 지표(Metrics)는 어떻게 구성해야 할까요?"""
+
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
@@ -118,6 +129,8 @@ def get_video_details_from_youtube_api(video_id):
 # 3. Gemini 요약 함수
 # ==========================================
 def summarize_with_gemini(video_title, video_url, video_description):
+    return MOCK_SUMMARY  # 테스트용 Mock 데이터 반환 (실제 배포 시 주석 처리)
+'''
     """Gemini API를 활용하여 자막 요약, 추가 지식, 기술 면접 질문을 생성합니다."""
     if not client:
         raise ValueError("GEMINI_API_KEY가 설정되지 않았습니다.")
@@ -149,7 +162,7 @@ def summarize_with_gemini(video_title, video_url, video_description):
         contents=prompt
     )
     return response.text.strip()
-
+'''
 
 # ==========================================
 # 4. 메인 실행 로직
