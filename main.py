@@ -16,6 +16,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY")
 KAKAO_REFRESH_TOKEN = os.environ.get("KAKAO_REFRESH_TOKEN")
+TARGET_UUID = os.environ.get("KAKAO_TARGET_UUID")
 
 # [테스트용 Mock 데이터]
 MOCK_SUMMARY = """🎬 **[영상 핵심 요약]**
@@ -53,14 +54,17 @@ def get_kakao_access_token():
 
 
 def send_kakao_message(title, url, summary):
-    """카카오톡 '나에게 보내기'로 요약본을 전송합니다 (글자 수 세이프가드 적용)."""
+    """카카오톡 채널 연동 메시지를 친구(TARGET_UUID)에게 전송합니다."""
     access_token = get_kakao_access_token()
     if not access_token:
         print("Access Token이 없어 메시지를 전송하지 못했습니다.")
         return False
 
-    api_url = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
-    headers = {"Authorization": f"Bearer {access_token}"}
+    api_url = "https://kapi.kakao.com/v1/api/talk/friends/message/default/send"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
 
     # -------------------------------------------------------------
     # [글자 수 세이프가드 적용]
@@ -92,12 +96,19 @@ def send_kakao_message(title, url, summary):
     res = requests.post(
     api_url, 
     headers=headers, 
-    data={"template_object": json.dumps(template_object, ensure_ascii=False)}
-)
+    data={"receiver_uuids": json.dumps([TARGET_UUID]),
+          "template_object": json.dumps(template_object, ensure_ascii=False)}
+    )
 
-    if res.status_code == 200 and res.json().get("result_code") == 0:
-        print("카카오톡 메시지 전송 성공!")
-        return True
+    # 친구 전송 API의 응답 결과 검증 (successful_receiver_uuids 확인)
+    if res.status_code == 200:
+        result = res.json()
+        if result.get("successful_receiver_uuids"):
+            print("카카오톡 메시지 전송 성공!")
+            return True
+        else:
+            print(f"카카오톡 전송 실패 (수신자 실패): {result}")
+            return False
     else:
         print(f"카카오톡 전송 실패: {res.status_code}, {res.text}")
         return False
@@ -202,8 +213,9 @@ def main():
             video_info = get_video_details_from_youtube_api(video_id)
             description = video_info["description"] if video_info else target_entry.get("summary", "")
 
-            # Gemini 2.5 활용 요약문 생성
-            summary = summarize_with_gemini(video_title, video_url, description)
+            # Gemini 2.0-flash-lite 활용 요약문 생성
+            # summary = summarize_with_gemini(video_title, video_url, description)
+            summary = MOCK_SUMMARY  # 테스트용 Mock 데이터 사용
             
             # 카카오톡 전송
             success = send_kakao_message(video_title, video_url, summary)
