@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import feedparser
+import time
 from google import genai
 from googleapiclient.discovery import build
 from example import MOCK_SUMMARY  # Mock 데이터 임포트
