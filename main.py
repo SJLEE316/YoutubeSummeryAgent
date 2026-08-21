@@ -58,6 +58,9 @@ def get_kakao_access_token():
         return None
 
 
+# ==========================================
+# 3. 카카오톡 메시지 전송 함수
+# ==========================================
 def send_kakao_message(title, url, summary):
     """카카오톡 채널 연동 메시지를 친구(TARGET_UUID)에게 전송합니다."""
     access_token = get_kakao_access_token()
@@ -136,6 +139,10 @@ def send_kakao_message(title, url, summary):
     return any(success_results)
 
 
+
+# ==========================================
+# 4. YouTube Data API v3를 활용한 영상 상세 정보 가져오기
+# ==========================================
 def get_video_details_from_youtube_api(video_id):
     """YouTube Data API v3를 활용하여 동영상 비디오 상세 정보를 가져옵니다."""
     if not YOUTUBE_API_KEY:
@@ -160,19 +167,22 @@ def get_video_details_from_youtube_api(video_id):
     return None
 
 # ==========================================
-# 3. Gemini 요약 함수
+# 5. Gemini 요약 함수
 # ==========================================
 def summarize_with_gemini(video_title, video_url, video_description):
     """Gemini API를 활용하여 자막 요약, 추가 지식, 기술 면접 질문을 생성합니다."""
-    # 2. Client 객체 생성 (API 키 전달)
+    # 1. Client 객체 생성 (API 키 전달)
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY")) if GEMINI_API_KEY else None
     if not client:
         raise ValueError("GEMINI_API_KEY가 설정되지 않았습니다.")
 
     prompt = f"""
-    당신은 IT/기술 분야의 전문 컨설턴트이자 면접관입니다.
-    아래 유튜브 기술 영상의 정보와 링크 내용을 기반으로 내용을 분석하고 핵심을 정리해 주세요.
-    전체 응답 길이는 공백 포함 **800자 이내**로 작성해 주세요.
+    당신은 IT/기술 분야의 최고 기술 책임자(CTO) 수준의 전문 컨설턴트이자 기술 면접관입니다.
+    아래 유튜브 기술 영상의 정보와 링크 내용을 바탕으로 기술적 깊이가 있는 핵심 분석 보고서를 작성해 주세요.
+
+    [작성 가이드]
+    1. 추상적인 개념 설명은 지양하고, **기술적 메커니즘, 동작 원리, 사용된 기술 스택 및 키워드** 위주로 구체적으로 작성하세요.
+    2. 전체 응답 길이는 공백 포함 **1800자 이내**로 작성해 주세요.
 
     [영상 정보]
     - 제목: {video_title}
@@ -182,16 +192,17 @@ def summarize_with_gemini(video_title, video_url, video_description):
 
     [작성 양식]
     🎬 **[영상 핵심 요약]**
-    - 영상의 핵심 주제 및 주요 내용 2~3줄 요약
+    - 영상에서 다루는 주요 기술의 작동 메커니즘, 취약점/특징, 핵심 프로세스를 기술적인 용어를 사용하여 4~5줄로 상세히 요약
 
     💡 **[AI 추가 배경지식]**
-    - 영상 주제 및 용어 이해를 돕는 추가 기술 배경지식 1~2줄
+    - 영상 속 기술 요소의 원리, 구조적 한계/특징, 관련 아키텍처 또는 대응 기술 메커니즘 등 심도 있는 기술 배경지식 3줄 정리
 
     🎯 **[기술 면접 예상 질문]**
-    - 이 기술 주제 관련 예상 면접 질문 1개와 1줄 힌트
+    - 이 기술 주제와 관련된 실무/아키텍처 수준의 기술 면접 질문 3개와 각각에 대한 구체적인 기술적 힌트(3줄 내외)
     """
 
-    # 3. 최신 SDK 방식의 컨텐츠 생성 호출
+
+    # 2. 최신 SDK 방식의 컨텐츠 생성 호출
     response = client.models.generate_content(
         model="gemini-3.6-flash",
         contents=prompt,
@@ -199,7 +210,7 @@ def summarize_with_gemini(video_title, video_url, video_description):
     return response.text.strip()
 
 # ==========================================
-# 4. 메인 실행 로직
+# 6. 메인 실행 로직
 # ==========================================
 def main():
     processed_videos = set()
@@ -262,7 +273,7 @@ def main():
             video_info = get_video_details_from_youtube_api(video_id)
             description = video_info["description"] if video_info else target_item["snippet"].get("description", "")
 
-            # Gemini 2.0-flash-lite 활용 요약문 생성
+            # Gemini 3.6-flash 활용 요약문 생성
             summary = summarize_with_gemini(video_title, video_url, description)
             
             # 카카오톡 전송
