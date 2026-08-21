@@ -180,7 +180,7 @@ def summarize_with_gemini(video_title, video_url, video_description):
     [작성 가이드]
     1. 추상적인 개념 설명은 지양하고, **기술적 메커니즘, 동작 원리, 사용된 기술 스택 및 키워드** 위주로 구체적으로 작성하세요.
     2. 응답은 정확히 두 부분으로 나누어 작성하고, 두 부분 사이에 구분 기호 `---SPLIT---` 만 한 줄로 넣어주세요.
-    3. 각 파트의 길이는 공백 포함 **800자~900자 이내**로 작성하세요.
+    3. 첫 번째 파트의 길이는 공백 포함 **800자~850자 이내**, 두 번째 파트의 길이는 공백 포함 **900자~950자 이내**로 작성하세요.
 
     [영상 정보]
     - 제목: {video_title}
@@ -290,7 +290,7 @@ def main():
 
             if not summary:
                 continue
-                
+
             # 카카오톡 전송
             success = send_kakao_message(video_title, video_url, summary)
 
