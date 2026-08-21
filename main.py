@@ -46,6 +46,7 @@ def get_kakao_access_token():
         "grant_type": "refresh_token",
         "client_id": KAKAO_REST_API_KEY,
         "refresh_token": KAKAO_REFRESH_TOKEN,
+        "client_secret": KAKAO_CLIENT_SECRET.strip(),
     }
     response = requests.post(url, data=data)
     result = response.json()
