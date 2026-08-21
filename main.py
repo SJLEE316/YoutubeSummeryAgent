@@ -5,7 +5,7 @@ import feedparser
 import time
 from google import genai
 from googleapiclient.discovery import build
-# from example import MOCK_SUMMARY  # Mock 데이터 임포트
+from google.api_core.exceptions import ServiceUnavailable
 
 # ==========================================
 # 1. 설정 및 환경 변수 로드
@@ -273,11 +273,24 @@ def main():
             video_info = get_video_details_from_youtube_api(video_id)
             description = video_info["description"] if video_info else target_item["snippet"].get("description", "")
 
-            # Gemini 3.6-flash 활용 요약문 생성
-            summary = summarize_with_gemini(video_title, video_url, description)
-            # [테스트용 Mock 데이터 사용]
-            # summary = MOCK_SUMMARY
-            
+            # Gemini 요약 (재시도 로직)
+            summary = None
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    summary = summarize_with_gemini(video_title, video_url, description)
+                    break  # 성공하면 루프 탈출
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        print(f"Gemini 요약 실패: {e}. {attempt + 1}번째 재시도 중... (3초 대기)")
+                        time.sleep(3)
+                    else:
+                        print(f"Gemini 최종 요약 실패 (최대 재시도 횟수 초과)")
+                        raise e
+
+            if not summary:
+                continue
+                
             # 카카오톡 전송
             success = send_kakao_message(video_title, video_url, summary)
 
