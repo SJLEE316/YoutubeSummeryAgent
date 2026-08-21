@@ -205,9 +205,20 @@ def main():
     for channel_id in CHANNEL_IDS:
         rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
         feed = feedparser.parse(rss_url)
-
+        
+        try:
+            feed = feedparser.parse(rss_url)
+        except Exception as e:
+            print(f"RSS 파싱 중 오류 발생: {e}")
+            continue
+            
+        # 피드 불러오기 실패 시 상세 원인 출력
         if not feed.entries:
             print(f"채널({channel_id})에서 영상 목록을 불러올 수 없습니다.")
+            if hasattr(feed, 'status'):
+                print(f"-> HTTP 응답 상태 코드: {feed.status}")
+            if hasattr(feed, 'bozo_exception'):
+                print(f"-> 파싱 에러 원인: {feed.bozo_exception}")
             continue
 
         target_entry = None
