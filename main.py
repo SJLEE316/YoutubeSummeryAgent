@@ -203,22 +203,30 @@ def main():
     has_processed = False
 
     for channel_id in CHANNEL_IDS:
+        channel_id = channel_id.strip()
         rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
-        feed = feedparser.parse(rss_url)
+        
+        # 1. 유튜브 RSS 차단을 방지하기 위한 브라우저 헤더 설정
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
         
         try:
-            feed = feedparser.parse(rss_url)
+            # 2. requests를 사용해 먼저 XML 텍스트를 안전하게 가져옴
+            response = requests.get(rss_url, headers=headers, timeout=10)
+            if response.status_code != 200:
+                print(f"⚠️ 채널({channel_id}) RSS 요청 실패 (HTTP {response.status_code})")
+                continue
+                
+            # 3. 받아온 response.text(XML 내용)를 feedparser에 전달
+            feed = feedparser.parse(response.text)
         except Exception as e:
-            print(f"RSS 파싱 중 오류 발생: {e}")
+            print(f"⚠️ 채널({channel_id}) RSS 요청 중 예외 발생: {e}")
             continue
             
-        # 피드 불러오기 실패 시 상세 원인 출력
+        # 영상 목록 체크 (중복 및 상세 에러 출력 제거)
         if not feed.entries:
-            print(f"채널({channel_id})에서 영상 목록을 불러올 수 없습니다.")
-            if hasattr(feed, 'status'):
-                print(f"-> HTTP 응답 상태 코드: {feed.status}")
-            if hasattr(feed, 'bozo_exception'):
-                print(f"-> 파싱 에러 원인: {feed.bozo_exception}")
+            print(f"⚠️ 채널({channel_id})에서 영상 목록을 불러올 수 없습니다.")
             continue
 
         target_entry = None
