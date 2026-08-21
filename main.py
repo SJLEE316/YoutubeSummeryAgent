@@ -34,7 +34,6 @@ MOCK_SUMMARY = """🎬 **[영상 핵심 요약]**
 🎯 **[기술 면접 예상 질문]**
 - Q. LLM 에이전트 설계 시 데이터 품질을 자동 검증하기 위한 평가 지표(Metrics)는 어떻게 구성해야 할까요?"""
 
-client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
 # ==========================================
@@ -165,6 +164,8 @@ def get_video_details_from_youtube_api(video_id):
 # ==========================================
 def summarize_with_gemini(video_title, video_url, video_description):
     """Gemini API를 활용하여 자막 요약, 추가 지식, 기술 면접 질문을 생성합니다."""
+    # 2. Client 객체 생성 (API 키 전달)
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY")) if GEMINI_API_KEY else None
     if not client:
         raise ValueError("GEMINI_API_KEY가 설정되지 않았습니다.")
 
@@ -190,9 +191,11 @@ def summarize_with_gemini(video_title, video_url, video_description):
     - 이 기술 주제 관련 예상 면접 질문 1개와 1줄 힌트
     """
 
-    rmodel = genai.GenerativeModel("gemini-2.0-flash")
-    chat = rmodel.start_chat()
-    response = chat.send_message(prompt)
+    # 3. 최신 SDK 방식의 컨텐츠 생성 호출
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt,
+    )
     return response.text.strip()
 
 # ==========================================
