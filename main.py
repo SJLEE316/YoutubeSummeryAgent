@@ -191,7 +191,7 @@ def summarize_with_gemini(video_title, video_url, video_description):
     """
 
     response = client.models.generate_content(
-        model="gemini-2.0-flash-lite",
+        model="gemini-1.5-flash",
         contents=prompt
     )
     return response.text.strip()
@@ -258,11 +258,10 @@ def main():
         try:
             # YouTube Data API v3로 영상 데이터 추출
             video_info = get_video_details_from_youtube_api(video_id)
-            description = video_info["description"] if video_info else target_entry.get("summary", "")
+            description = video_info["description"] if video_info else target_item["snippet"].get("description", "")
 
             # Gemini 2.0-flash-lite 활용 요약문 생성
-            # summary = summarize_with_gemini(video_title, video_url, description)
-            summary = MOCK_SUMMARY  # 테스트용 Mock 데이터 사용
+            summary = summarize_with_gemini(video_title, video_url, description)
             
             # 카카오톡 전송
             success = send_kakao_message(video_title, video_url, summary)
