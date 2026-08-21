@@ -16,6 +16,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY")
 KAKAO_REFRESH_TOKEN = os.environ.get("KAKAO_REFRESH_TOKEN")
+KAKAO_CLIENT_SECRET = os.environ.get("KAKAO_CLIENT_SECRET")
 TARGET_UUID = os.environ.get("KAKAO_TARGET_UUID")
 SEND_MODE = os.environ.get("KAKAO_SEND_MODE", "3")  # 설정이 없으면 기본값 "3" (모두 전송)
 
@@ -44,7 +45,7 @@ def get_kakao_access_token():
     url = "https://kauth.kakao.com/oauth/token"
     data = {
         "grant_type": "refresh_token",
-        "client_id": KAKAO_REST_API_KEY,
+        "client_id": KAKAO_REST_API_KEY, 
         "refresh_token": KAKAO_REFRESH_TOKEN,
         "client_secret": KAKAO_CLIENT_SECRET.strip(),
     }
