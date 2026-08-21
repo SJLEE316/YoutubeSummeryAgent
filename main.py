@@ -19,6 +19,9 @@ KAKAO_REFRESH_TOKEN = os.environ.get("KAKAO_REFRESH_TOKEN")
 TARGET_UUID = os.environ.get("KAKAO_TARGET_UUID")
 SEND_MODE = os.environ.get("KAKAO_SEND_MODE", "3")  # 설정이 없으면 기본값 "3" (모두 전송)
 
+youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+
+
 # [테스트용 Mock 데이터]
 MOCK_SUMMARY = """🎬 **[영상 핵심 요약]**
 - OpenAI가 데이터 에이전트를 구축하며 적용한 핵심 Arch 패턴 및 학습 데이터 파이프라인 정리.
