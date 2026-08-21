@@ -4,6 +4,7 @@ import requests
 import feedparser
 from google import genai
 from googleapiclient.discovery import build
+from example import MOCK_SUMMARY  # Mock 데이터 임포트
 
 # ==========================================
 # 1. 설정 및 환경 변수 로드
@@ -21,18 +22,6 @@ TARGET_UUID = os.environ.get("KAKAO_TARGET_UUID")
 SEND_MODE = os.environ.get("KAKAO_SEND_MODE", "3")  # 설정이 없으면 기본값 "3" (모두 전송)
 
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-
-
-# [테스트용 Mock 데이터]
-MOCK_SUMMARY = """🎬 **[영상 핵심 요약]**
-- OpenAI가 데이터 에이전트를 구축하며 적용한 핵심 Arch 패턴 및 학습 데이터 파이프라인 정리.
-- 에이전트 성능 향상을 위한 데이터 정제 자동화 및 피드백 루프 구조 소개.
-
-💡 **[AI 추가 배경지식]**
-- Data Agent는 비구조화된 데이터를 LLM이 학습/추론하기 쉬운 형태로 자동 변환해 주는 AI 파이프라인 시스템입니다.
-
-🎯 **[기술 면접 예상 질문]**
-- Q. LLM 에이전트 설계 시 데이터 품질을 자동 검증하기 위한 평가 지표(Metrics)는 어떻게 구성해야 할까요?"""
 
 
 
@@ -73,70 +62,77 @@ def send_kakao_message(title, url, summary):
         "Content-Type": "application/x-www-form-urlencoded"
     }
 
-    # -------------------------------------------------------------
-    # [글자 수 세이프가드 적용]
-    # 카카오톡 메시지 본문 제한(약 1800자 안전 기준) 고려
-    # -------------------------------------------------------------
+    # 1. Title 및 헤더 작성
     max_title_len = 50
     trimmed_title = title if len(title) <= max_title_len else title[:max_title_len] + "..."
 
     # 기본 헤더/링크 구문 작성
     header_text = f"🎬 [유튜브 영상 요약]\n\n📌 제목: {trimmed_title}\n🔗 링크: {url}\n\n📝 AI 요약 내용:\n"
-    
-    # 헤더 길이 포함 전체 1800자 이내로 요약문 자르기
-    available_summary_len = 1800 - len(header_text)
-    
-    if len(summary) > available_summary_len:
-        trimmed_summary = summary[:available_summary_len - 15] + "\n\n(내용이 길어 일부 생략됨)"
+
+    # 2. 구분자(---SPLIT---)를 기준으로 summary 분할
+    if "---SPLIT---" in summary:
+        parts = summary.split("---SPLIT---")
+        part1 = parts[0].strip()
+        part2 = parts[1].strip()
+        messages = [
+            f"{header_text}[1/2 요약 & 배경지식]\n\n{part1}",
+            f"[2/2 기술 면접 질문]\n\n{part2}"
+        ]
     else:
-        trimmed_summary = summary
+        # 구분자가 없는 경우 기존처럼 1개의 메시지로 처리
+        messages = [f"{header_text}📝 AI 요약 내용:\n{summary}"]
 
-    message_text = header_text + trimmed_summary
+    overall_success = []
 
-    template_object = {
-        "object_type": "text",
-        "text": message_text,
-        "link": {"web_url": url, "mobile_web_url": url},
-        "button_title": "영상 보기",
-    }
+    for idx, message_text in enumerate(messages):
+        template_object = {
+            "object_type": "text",
+            "text": message_text,
+            "link": {"web_url": url, "mobile_web_url": url},
+            "button_title": "영상 보기",
+        }
 
-    success_results = []
+        success_results = []
 
-    # 1. 나에게 전송 (SEND_MODE가 "1" 또는 "3"일 때)
-    if SEND_MODE in ["1", "3"]:
-        me_url = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
-        me_payload = {"template_object": json.dumps(template_object, ensure_ascii=False)}
-        res_me = requests.post(me_url, headers=headers, data=me_payload)
-        
-        if res_me.status_code == 200 and res_me.json().get("result_code") == 0:
-            print("카카오톡 [나에게] 전송 성공!")
-            success_results.append(True)
-        else:
-            print(f"카카오톡 [나에게] 전송 실패: {res_me.text}")
-            success_results.append(False)
-
-    
-    
-    # 2. 친구에게 전송 (SEND_MODE가 "2" 또는 "3"일 때)
-    if SEND_MODE in ["2", "3"]:
-        if not TARGET_UUID:
-            print("KAKAO_TARGET_UUID가 설정되어 있지 않아 친구 전송을 건너땁니다.")
-        else:
-            friend_url = "https://kapi.kakao.com/v1/api/talk/friends/message/default/send"
-            friend_payload = {
-                "receiver_uuids": json.dumps([TARGET_UUID]),
-                "template_object": json.dumps(template_object, ensure_ascii=False)
-            }
-            res_friend = requests.post(friend_url, headers=headers, data=friend_payload)
+        # 1. 나에게 전송 (SEND_MODE가 "1" 또는 "3"일 때)
+        if SEND_MODE in ["1", "3"]:
+            me_url = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
+            me_payload = {"template_object": json.dumps(template_object, ensure_ascii=False)}
+            res_me = requests.post(me_url, headers=headers, data=me_payload)
             
-            if res_friend.status_code == 200 and res_friend.json().get("successful_receiver_uuids"):
-                print("카카오톡 [친구에게] 전송 성공!")
+            if res_me.status_code == 200 and res_me.json().get("result_code") == 0:
+                print(f"카카오톡 [나에게] ({idx+1}/{len(messages)}) 전송 성공!")
                 success_results.append(True)
             else:
-                print(f"카카오톡 [친구에게] 전송 실패: {res_friend.text}")
+                print(f"카카오톡 [나에게] ({idx+1}/{len(messages)}) 전송 실패: {res_me.text}")
                 success_results.append(False)
+
+        # 2. 친구에게 전송 (SEND_MODE가 "2" 또는 "3"일 때)
+        if SEND_MODE in ["2", "3"]:
+            if not TARGET_UUID:
+                print("KAKAO_TARGET_UUID가 설정되어 있지 않아 친구 전송을 건너땁니다.")
+            else:
+                friend_url = "https://kapi.kakao.com/v1/api/talk/friends/message/default/send"
+                friend_payload = {
+                    "receiver_uuids": json.dumps([TARGET_UUID]),
+                    "template_object": json.dumps(template_object, ensure_ascii=False)
+                }
+                res_friend = requests.post(friend_url, headers=headers, data=friend_payload)
                 
-    return any(success_results)
+                if res_friend.status_code == 200 and res_friend.json().get("successful_receiver_uuids"):
+                    print(f"카카오톡 [친구에게] ({idx+1}/{len(messages)}) 전송 성공!")
+                    success_results.append(True)
+                else:
+                    print(f"카카오톡 [친구에게] ({idx+1}/{len(messages)}) 전송 실패: {res_friend.text}")
+                    success_results.append(False)
+
+        overall_success.append(any(success_results))
+
+        # 순서 보장 및 도배 방지를 위한 미세 지연 (0.5초)
+        if idx < len(messages) - 1:
+            time.sleep(0.5)
+
+    return all(overall_success)
 
 
 
@@ -182,7 +178,8 @@ def summarize_with_gemini(video_title, video_url, video_description):
 
     [작성 가이드]
     1. 추상적인 개념 설명은 지양하고, **기술적 메커니즘, 동작 원리, 사용된 기술 스택 및 키워드** 위주로 구체적으로 작성하세요.
-    2. 전체 응답 길이는 공백 포함 **1800자 이내**로 작성해 주세요.
+    2. 응답은 정확히 두 부분으로 나누어 작성하고, 두 부분 사이에 구분 기호 `---SPLIT---` 만 한 줄로 넣어주세요.
+    3. 각 파트의 길이는 공백 포함 **800자~900자 이내**로 작성하세요.
 
     [영상 정보]
     - 제목: {video_title}
@@ -191,14 +188,16 @@ def summarize_with_gemini(video_title, video_url, video_description):
     {video_description[:3000]}
 
     [작성 양식]
-    🎬 **[영상 핵심 요약]**
-    - 영상에서 다루는 주요 기술의 작동 메커니즘, 취약점/특징, 핵심 프로세스를 기술적인 용어를 사용하여 4~5줄로 상세히 요약
+    🎬 [영상 핵심 요약]
+    - 주요 기술의 작동 메커니즘, 취약점/특징, 핵심 프로세스를 기술 용어를 사용하여 4~5줄 요약
 
-    💡 **[AI 추가 배경지식]**
-    - 영상 속 기술 요소의 원리, 구조적 한계/특징, 관련 아키텍처 또는 대응 기술 메커니즘 등 심도 있는 기술 배경지식 3줄 정리
+    💡 [AI 추가 배경지식]
+    - 기술 요소 원리, 구조적 한계/특징, 관련 아키텍처 등 심도 있는 기술 배경지식 3줄 정리
 
-    🎯 **[기술 면접 예상 질문]**
-    - 이 기술 주제와 관련된 실무/아키텍처 수준의 기술 면접 질문 3개와 각각에 대한 구체적인 기술적 힌트(3줄 내외)
+    ---SPLIT---
+
+    🎯 [기술 면접 예상 질문]
+    - 실무/아키텍처 수준의 기술 면접 질문 3개와 각각에 대한 구체적인 기술적 힌트(3줄 내외)
     """
 
 
@@ -274,7 +273,9 @@ def main():
             description = video_info["description"] if video_info else target_item["snippet"].get("description", "")
 
             # Gemini 3.6-flash 활용 요약문 생성
-            summary = summarize_with_gemini(video_title, video_url, description)
+            # summary = summarize_with_gemini(video_title, video_url, description)
+            # [테스트용 Mock 데이터 사용]
+            summary = MOCK_SUMMARY
             
             # 카카오톡 전송
             success = send_kakao_message(video_title, video_url, summary)
