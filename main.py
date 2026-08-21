@@ -190,10 +190,9 @@ def summarize_with_gemini(video_title, video_url, video_description):
     - 이 기술 주제 관련 예상 면접 질문 1개와 1줄 힌트
     """
 
-    response = client.models.generate_content(
-        model="gemini-1.5-flash",
-        contents=prompt
-    )
+    rmodel = genai.GenerativeModel("gemini-2.0-flash")
+    chat = rmodel.start_chat()
+    response = chat.send_message(prompt)
     return response.text.strip()
 
 # ==========================================
