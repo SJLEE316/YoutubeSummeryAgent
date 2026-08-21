@@ -5,7 +5,7 @@ import feedparser
 import time
 from google import genai
 from googleapiclient.discovery import build
-from example import MOCK_SUMMARY  # Mock 데이터 임포트
+# from example import MOCK_SUMMARY  # Mock 데이터 임포트
 
 # ==========================================
 # 1. 설정 및 환경 변수 로드
@@ -68,7 +68,7 @@ def send_kakao_message(title, url, summary):
     trimmed_title = title if len(title) <= max_title_len else title[:max_title_len] + "..."
 
     # 기본 헤더/링크 구문 작성
-    header_text = f"🎬 [유튜브 영상 요약]\n\n📌 제목: {trimmed_title}\n🔗 링크: {url}\n\n📝 AI 요약 내용:\n"
+    header_text = f"🎬 [유튜브 영상 요약]\n\n📌 제목: {trimmed_title}\n🔗 링크: {url}"
 
     # 2. 구분자(---SPLIT---)를 기준으로 summary 분할
     if "---SPLIT---" in summary:
@@ -76,8 +76,8 @@ def send_kakao_message(title, url, summary):
         part1 = parts[0].strip()
         part2 = parts[1].strip()
         messages = [
-            f"{header_text}[1/2 요약 & 배경지식]\n\n{part1}",
-            f"[2/2 기술 면접 질문]\n\n{part2}"
+            f"{header_text}\n\n{part1}",
+            f"{part2}"
         ]
     else:
         # 구분자가 없는 경우 기존처럼 1개의 메시지로 처리
@@ -274,9 +274,9 @@ def main():
             description = video_info["description"] if video_info else target_item["snippet"].get("description", "")
 
             # Gemini 3.6-flash 활용 요약문 생성
-            # summary = summarize_with_gemini(video_title, video_url, description)
+            summary = summarize_with_gemini(video_title, video_url, description)
             # [테스트용 Mock 데이터 사용]
-            summary = MOCK_SUMMARY
+            # summary = MOCK_SUMMARY
             
             # 카카오톡 전송
             success = send_kakao_message(video_title, video_url, summary)
