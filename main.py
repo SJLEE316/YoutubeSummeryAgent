@@ -94,13 +94,13 @@ def send_kakao_message(title, url, summary):
     }
 
     success_results = []
-    
+
     # 1. 나에게 전송 (SEND_MODE가 "1" 또는 "3"일 때)
-    if SEND_MODE in ["1", "3"]:
+    if SEND_MODE in ["1", "3"]:
         me_url = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
         me_payload = {"template_object": json.dumps(template_object, ensure_ascii=False)}
         res_me = requests.post(me_url, headers=headers, data=me_payload)
-        
+        
         if res_me.status_code == 200 and res_me.json().get("result_code") == 0:
             print("카카오톡 [나에게] 전송 성공!")
             success_results.append(True)
@@ -108,9 +108,9 @@ def send_kakao_message(title, url, summary):
             print(f"카카오톡 [나에게] 전송 실패: {res_me.text}")
             success_results.append(False)
 
-
-
-    # 2. 친구에게 전송 (SEND_MODE가 "2" 또는 "3"일 때)
+    
+    
+    # 2. 친구에게 전송 (SEND_MODE가 "2" 또는 "3"일 때)
     if SEND_MODE in ["2", "3"]:
         if not TARGET_UUID:
             print("KAKAO_TARGET_UUID가 설정되어 있지 않아 친구 전송을 건너땁니다.")
@@ -121,15 +121,15 @@ def send_kakao_message(title, url, summary):
                 "template_object": json.dumps(template_object, ensure_ascii=False)
             }
             res_friend = requests.post(friend_url, headers=headers, data=friend_payload)
-
+            
             if res_friend.status_code == 200 and res_friend.json().get("successful_receiver_uuids"):
                 print("카카오톡 [친구에게] 전송 성공!")
                 success_results.append(True)
             else:
                 print(f"카카오톡 [친구에게] 전송 실패: {res_friend.text}")
                 success_results.append(False)
-
-    return any(success_results)
+                
+    return any(success_results)
 
 
 def get_video_details_from_youtube_api(video_id):
