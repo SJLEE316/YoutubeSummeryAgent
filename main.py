@@ -203,49 +203,53 @@ def main():
     has_processed = False
 
     for channel_id in CHANNEL_IDS:
-        channel_id = channel_id.strip()
-        rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+        # 1. UC 접두사를 UU로 바꿔 업로드 재생목록 ID 생성
+        clean_id = channel_id.strip()
+        uploads_playlist_id = "UU" + clean_id[2:] if clean_id.startswith("UC") else clean_id
         
-        # 1. 유튜브 RSS 차단을 방지하기 위한 브라우저 헤더 설정
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        
-        try:
-            # 2. requests를 사용해 먼저 XML 텍스트를 안전하게 가져옴
-            response = requests.get(rss_url, headers=headers, timeout=10)
-            if response.status_code != 200:
-                print(f"⚠️ 채널({channel_id}) RSS 요청 실패 (HTTP {response.status_code})")
-                continue
-                
-            # 3. 받아온 response.text(XML 내용)를 feedparser에 전달
-            feed = feedparser.parse(response.text)
-        except Exception as e:
-            print(f"⚠️ 채널({channel_id}) RSS 요청 중 예외 발생: {e}")
-            continue
-            
-        # 영상 목록 체크 (중복 및 상세 에러 출력 제거)
-        if not feed.entries:
-            print(f"⚠️ 채널({channel_id})에서 영상 목록을 불러올 수 없습니다.")
-            continue
+        target_item = None
+        next_page_token = None
 
-        target_entry = None
-        for entry in feed.entries:
-            v_id = entry.yt_videoid
-            if v_id not in processed_videos:
-                target_entry = entry
+        # 미처리 영상을 찾을 때까지 (또는 영상이 끝날 때까지) 페이지를 넘기며 탐색
+        while True:
+            try:
+                playlist_response = youtube.playlistItems().list(
+                    playlistId=uploads_playlist_id,
+                    part="snippet",
+                    maxResults=5,
+                    pageToken=next_page_token
+                ).execute()
+
+                items = playlist_response.get("items", [])
+                if not items:
+                    break
+
+                # 가져온 5개 중 미처리 영상 탐색
+                for item in items:
+                    v_id = item["snippet"]["resourceId"]["videoId"]
+                    if v_id not in processed_videos:
+                        target_item = item
+                        break  # 찾았으므로 루프 탈출
+
+                # target_item을 찾았거나, 더 이상 다음 페이지가 없으면 탐색 종료
+                next_page_token = playlist_response.get("nextPageToken")
+                if target_item or not next_page_token:
+                    break
+
+            except Exception as e:
+                print(f"⚠️ 채널({channel_id}) API 요청 중 오류: {e}")
                 break
 
-        if not target_entry:
+        if not target_item:
             print(f"채널({channel_id}): 모든 영상이 이미 처리되었습니다.")
             continue
 
-        video_id = target_entry.yt_videoid
-        video_title = target_entry.title
+        video_id = target_item["snippet"]["resourceId"]["videoId"]
+        video_title = target_item["snippet"]["title"]
         video_url = f"https://www.youtube.com/watch?v={video_id}"
 
         print(f"요약 대상 영상 발견: '{video_title}' ({video_id})")
-
+        
         try:
             # YouTube Data API v3로 영상 데이터 추출
             video_info = get_video_details_from_youtube_api(video_id)
