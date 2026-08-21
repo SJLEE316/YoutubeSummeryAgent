@@ -93,9 +93,9 @@ def send_kakao_message(title, url, summary):
         "button_title": "영상 보기",
     }
 
-    success_results = []
-
-    # 1. 나에게 전송 (SEND_MODE가 "1" 또는 "3"일 때)
+    success_results = []
+    
+    # 1. 나에게 전송 (SEND_MODE가 "1" 또는 "3"일 때)
     if SEND_MODE in ["1", "3"]:
         me_url = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
         me_payload = {"template_object": json.dumps(template_object, ensure_ascii=False)}
