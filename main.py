@@ -193,7 +193,7 @@ def summarize_with_gemini(video_title, video_url, video_description):
 
     # 3. 최신 SDK 방식의 컨텐츠 생성 호출
     response = client.models.generate_content(
-        model="gemini-2.6-flash",
+        model="gemini-3.6-flash",
         contents=prompt,
     )
     return response.text.strip()
