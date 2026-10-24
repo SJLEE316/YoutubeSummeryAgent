@@ -108,6 +108,10 @@ python main.py
 | `MAX_BLOG_PAGES` | `10` | 안 보낸 글을 찾기 위해 읽을 최대 페이지 수 |
 | `GEMINI_MODEL` | `gemini-3.6-flash` | 요약에 사용할 Gemini 모델 |
 | `GEMINI_RETRY_DELAYS` | `[30, 60, 120, 240]` | Gemini 호출 실패(503 과부하 등) 시 재시도 전 대기 시간(초) |
+| `MAX_FALLBACK_MODELS` | `2` | 기본 모델이 끝까지 실패하면 차례로 시도할 예비 모델 수 |
+| `FALLBACK_RETRY_DELAYS` | `[30, 60]` | 예비 모델 재시도 전 대기 시간(초) |
+
+기본 모델(`GEMINI_MODEL`)이 재시도 후에도 실패하면, API 키로 사용 가능한 모델 목록을 조회해 다른 Flash 계열 모델(정식 버전 → Lite가 아닌 모델 → 최신 버전 순)로 자동 전환합니다. 실제로 사용된 모델과 사용 가능한 모델 목록은 실행 로그에 출력됩니다.
 
 요약 형식과 어조는 `SUMMARY_GUIDE`, `SUMMARY_FORMAT` 프롬프트에서 바꿀 수 있습니다.
 

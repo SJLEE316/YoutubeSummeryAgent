@@ -32,6 +32,9 @@ MAX_BLOG_PAGES = 10  # 안 보낸 글을 찾기 위해 읽을 최대 페이지 �
 VIDEO_RECENT_DAYS = 7  # 이 기간 안에 올라온 영상만 '새 영상'으로 보고 전송
 GEMINI_MODEL = "gemini-3.6-flash"
 GEMINI_RETRY_DELAYS = [30, 60, 120, 240]  # 재시도 전 대기 시간(초), 최초 시도 포함 최대 5번 시도
+FALLBACK_RETRY_DELAYS = [30, 60]  # 예비 모델 재시도 전 대기 시간(초)
+MAX_FALLBACK_MODELS = 2  # 기본 모델이 실패하면 차례로 시도할 예비 모델 수
+FALLBACK_EXCLUDE_WORDS = ("image", "tts", "audio", "live", "native", "embedding", "8b")
 MAX_GEMINI_IMAGES = 5  # Gemini에 함께 넘길 본문 이미지 수
 MAX_DISCORD_IMAGES = 4  # 상세 해설 아래에 붙일 이미지 수 (Discord 갤러리 최대 4장)
 GEMINI_IMAGE_TYPES = ("image/png", "image/jpeg", "image/webp", "image/heic", "image/heif")
@@ -266,35 +269,90 @@ def _log_token_usage(response):
         print(f"  - 입력 {detail.modality}: {detail.token_count}")
 
 
-def _generate(contents):
-    """Gemini로 요약을 생성해 {summary, background, interview} dict로 반환합니다."""
-    if not client:
-        raise ValueError("GEMINI_API_KEY가 설정되지 않았습니다.")
-
-    # 503(과부하) 같은 일시적 오류에 대비해 재시도 간격을 점점 늘림
-    for attempt in range(len(GEMINI_RETRY_DELAYS) + 1):
+def _call_gemini(model, contents, retry_delays):
+    """지정한 모델로 요약을 생성합니다. 실패하면 retry_delays 간격으로 재시도합니다."""
+    for attempt in range(len(retry_delays) + 1):
         try:
             response = client.models.generate_content(
-                model=GEMINI_MODEL,
+                model=model,
                 contents=contents,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_schema=REPORT_SCHEMA,
                 ),
             )
+            print(f"요약 모델: {model}")
             _log_token_usage(response)
             report = json.loads(response.text)
             for key, _, _ in REPORT_SECTIONS:
                 print(f"  - {key}: {len(report.get(key, ''))}자")
             return report
         except Exception as e:
-            if attempt < len(GEMINI_RETRY_DELAYS):
-                delay = GEMINI_RETRY_DELAYS[attempt]
-                print(f"Gemini 요약 실패: {e}. {delay}초 후 {attempt + 1}번째 재시도...")
+            if attempt < len(retry_delays):
+                delay = retry_delays[attempt]
+                print(f"Gemini({model}) 요약 실패: {e}. {delay}초 후 {attempt + 1}번째 재시도...")
                 time.sleep(delay)
             else:
-                print("Gemini 최종 요약 실패 (최대 재시도 횟수 초과)")
+                print(f"Gemini({model}) 최종 요약 실패 (최대 재시도 횟수 초과)")
                 raise
+
+
+def _version_of(model_name):
+    match = re.search(r"gemini-(\d+(?:\.\d+)?)", model_name)
+    return float(match.group(1)) if match else 0.0
+
+
+def find_fallback_models():
+    """
+    이 API 키로 쓸 수 있는 모델 중 예비로 쓸 Flash 계열 모델을 찾습니다.
+    정식 버전 우선 → Lite가 아닌 모델 우선 → 최신 버전 우선 순으로 정렬합니다.
+    """
+    try:
+        models = list(client.models.list())
+    except Exception as e:
+        print(f"모델 목록 조회 실패: {e}")
+        return []
+
+    candidates = []
+    for m in models:
+        name = re.sub(r"^models/", "", m.name or "")
+        actions = getattr(m, "supported_actions", None) or []
+        if "generateContent" not in actions or "flash" not in name or name == GEMINI_MODEL:
+            continue
+        if any(word in name for word in FALLBACK_EXCLUDE_WORDS):
+            continue
+        candidates.append(name)
+
+    print(f"사용 가능한 Flash 모델: {', '.join(candidates) or '(없음)'}")
+    candidates.sort(key=lambda n: (
+        "preview" in n or "exp" in n,
+        "lite" in n,
+        -_version_of(n),
+    ))
+    return candidates[:MAX_FALLBACK_MODELS]
+
+
+def _generate(contents):
+    """
+    Gemini로 요약을 생성해 {summary, background, interview} dict로 반환합니다.
+    기본 모델이 503(과부하) 등으로 계속 실패하면 예비 모델로 넘어갑니다.
+    """
+    if not client:
+        raise ValueError("GEMINI_API_KEY가 설정되지 않았습니다.")
+
+    try:
+        return _call_gemini(GEMINI_MODEL, contents, GEMINI_RETRY_DELAYS)
+    except Exception as e:
+        first_error = e
+
+    for model in find_fallback_models():
+        print(f"예비 모델로 전환: {model}")
+        try:
+            return _call_gemini(model, contents, FALLBACK_RETRY_DELAYS)
+        except Exception:
+            continue
+
+    raise first_error
 
 
 def summarize_video_with_gemini(video_title, video_url, video_description):
