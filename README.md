@@ -105,7 +105,7 @@ python main.py
 | `VIDEO_RECENT_DAYS` | `7` | 이 기간 안에 올라온 영상만 새 영상으로 간주 |
 | `MAX_BLOG_PAGES` | `10` | 안 보낸 글을 찾기 위해 읽을 최대 페이지 수 |
 | `GEMINI_MODEL` | `gemini-3.6-flash` | 요약에 사용할 Gemini 모델 |
-| `GEMINI_MAX_RETRIES` | `3` | Gemini 호출 실패 시 재시도 횟수 |
+| `GEMINI_RETRY_DELAYS` | `[30, 60, 120, 240]` | Gemini 호출 실패(503 과부하 등) 시 재시도 전 대기 시간(초) |
 
 요약 형식과 어조는 `SUMMARY_GUIDE`, `SUMMARY_FORMAT` 프롬프트에서 바꿀 수 있습니다.
 
@@ -115,4 +115,5 @@ Substack 기반 블로그라면 `BLOG_URL`만 바꿔서 다른 블로그에도 �
 
 - 블로그 데이터는 Substack의 비공식 API(`/api/v1/archive`, `/api/v1/posts`)를 사용합니다. Substack 사이트 공통 구조라 비교적 안정적이지만, 변경되면 수정이 필요할 수 있습니다.
 - Discord 메시지는 4000자 단위로 나눠 전송합니다.
+- 요약이나 전송에 실패하면 Actions 실행이 실패(빨간색)로 표시되고 GitHub에서 알림 메일이 옵니다. 실패한 항목은 기록되지 않으므로 다음 실행 때 다시 시도합니다.
 - Gemini API 무료 등급은 입력 내용이 Google 서비스 개선에 사용될 수 있습니다.

@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import html
 import json
 import time
@@ -29,7 +30,7 @@ BLOG_PAGE_SIZE = 12
 MAX_BLOG_PAGES = 10  # 안 보낸 글을 찾기 위해 읽을 최대 페이지 수
 VIDEO_RECENT_DAYS = 7  # 이 기간 안에 올라온 영상만 '새 영상'으로 보고 전송
 GEMINI_MODEL = "gemini-3.6-flash"
-GEMINI_MAX_RETRIES = 3
+GEMINI_RETRY_DELAYS = [30, 60, 120, 240]  # 재시도 전 대기 시간(초), 최초 시도 포함 최대 5번 시도
 MAX_GEMINI_IMAGES = 5  # Gemini에 함께 넘길 본문 이미지 수
 MAX_DISCORD_IMAGES = 4  # 상세 해설 아래에 붙일 이미지 수 (Discord 갤러리 최대 4장)
 GEMINI_IMAGE_TYPES = ("image/png", "image/jpeg", "image/webp", "image/heic", "image/heif")
@@ -269,7 +270,8 @@ def _generate(contents):
     if not client:
         raise ValueError("GEMINI_API_KEY가 설정되지 않았습니다.")
 
-    for attempt in range(GEMINI_MAX_RETRIES):
+    # 503(과부하) 같은 일시적 오류에 대비해 재시도 간격을 점점 늘림
+    for attempt in range(len(GEMINI_RETRY_DELAYS) + 1):
         try:
             response = client.models.generate_content(
                 model=GEMINI_MODEL,
@@ -285,9 +287,10 @@ def _generate(contents):
                 print(f"  - {key}: {len(report.get(key, ''))}자")
             return report
         except Exception as e:
-            if attempt < GEMINI_MAX_RETRIES - 1:
-                print(f"Gemini 요약 실패: {e}. {attempt + 1}번째 재시도 중... (3초 대기)")
-                time.sleep(3)
+            if attempt < len(GEMINI_RETRY_DELAYS):
+                delay = GEMINI_RETRY_DELAYS[attempt]
+                print(f"Gemini 요약 실패: {e}. {delay}초 후 {attempt + 1}번째 재시도...")
+                time.sleep(delay)
             else:
                 print("Gemini 최종 요약 실패 (최대 재시도 횟수 초과)")
                 raise
@@ -329,6 +332,14 @@ def summarize_blog_with_gemini(title, body, image_urls):
 # ==========================================
 # 5. 메인 실행 로직
 # ==========================================
+errors = []  # 실행 중 발생한 오류 (하나라도 있으면 종료 코드 1로 Actions 실패 처리)
+
+
+def report_error(message):
+    print(message)
+    errors.append(message)
+
+
 def record_processed(item_id, processed):
     processed.add(item_id)
     with open(PROCESSED_FILE, "a", encoding="utf-8") as f:
@@ -349,7 +360,7 @@ def process_latest_video(channel_id, processed):
             maxResults=10,
         ).execute().get("items", [])
     except Exception as e:
-        print(f"⚠️ 채널({channel_id}) API 요청 중 오류: {e}")
+        report_error(f"⚠️ 채널({channel_id}) API 요청 중 오류: {e}")
         return False
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=VIDEO_RECENT_DAYS)
@@ -379,12 +390,13 @@ def process_latest_video(channel_id, processed):
         thumbnails = target_item["snippet"].get("thumbnails", {})
         thumbnail = next((thumbnails[k]["url"] for k in ("maxres", "high", "medium") if k in thumbnails), None)
 
-        if send_discord_report("🎬", video_title, video_url, report, [thumbnail] if thumbnail else []):
-            record_processed(video_id, processed)
-            print(f"성공적으로 처리 완료되어 기록되었습니다: {video_id}")
-            return True
+        if not send_discord_report("🎬", video_title, video_url, report, [thumbnail] if thumbnail else []):
+            raise RuntimeError("디스코드 전송 실패")
+        record_processed(video_id, processed)
+        print(f"성공적으로 처리 완료되어 기록되었습니다: {video_id}")
+        return True
     except Exception as e:
-        print(f"영상({video_id}) 처리 중 에러 발생: {e}")
+        report_error(f"영상({video_id}) 처리 중 에러 발생: {e}")
     return False
 
 
@@ -405,7 +417,7 @@ def process_latest_blog_post(processed):
                 break
             print(f"블로그: {page_num}페이지의 글은 모두 처리됨, 다음 페이지 확인")
     except Exception as e:
-        print(f"블로그 글 목록 수집 중 에러 발생: {e}")
+        report_error(f"블로그 글 목록 수집 중 에러 발생: {e}")
 
     if not target_post:
         print("블로그: 보낼 글이 없습니다.")
@@ -420,12 +432,13 @@ def process_latest_blog_post(processed):
         print(f"본문 {len(body)}자, 이미지 {len(image_urls)}장")
         report = summarize_blog_with_gemini(title, body, image_urls)
 
-        if send_discord_report("📰", title, target_post["canonical_url"], report, image_urls):
-            record_processed(BLOG_PREFIX + slug, processed)
-            print(f"성공적으로 처리 완료되어 기록되었습니다: {slug}")
-            return True
+        if not send_discord_report("📰", title, target_post["canonical_url"], report, image_urls):
+            raise RuntimeError("디스코드 전송 실패")
+        record_processed(BLOG_PREFIX + slug, processed)
+        print(f"성공적으로 처리 완료되어 기록되었습니다: {slug}")
+        return True
     except Exception as e:
-        print(f"블로그 글({slug}) 처리 중 에러 발생: {e}")
+        report_error(f"블로그 글({slug}) 처리 중 에러 발생: {e}")
     return False
 
 
@@ -448,8 +461,11 @@ def main():
     if RUN_MODE == "blog" or (RUN_MODE == "auto" and not has_processed):
         has_processed = process_latest_blog_post(processed)
 
+    if errors:
+        print(f"오류 {len(errors)}건이 발생해 실패로 종료합니다.")
+        sys.exit(1)
     if not has_processed:
-        print("새로 요약해서 보낼 블로그 글/영상이 없거나 처리에 실패했습니다.")
+        print("새로 요약해서 보낼 블로그 글/영상이 없습니다.")
 
 
 if __name__ == "__main__":

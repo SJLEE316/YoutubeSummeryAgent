@@ -45,6 +45,7 @@ jobs:
         run: python main.py
 
       - name: 처리된 영상 기록 저장 (Git Commit)
+        if: always() # 요약 스크립트가 실패해도, 그 전에 성공적으로 보낸 기록은 저장
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
