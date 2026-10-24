@@ -1,10 +1,12 @@
 import os
 import re
 import html
+import json
 import time
 from datetime import datetime, timedelta, timezone
 import requests
 from google import genai
+from google.genai import types
 from googleapiclient.discovery import build
 
 # ==========================================
@@ -28,6 +30,9 @@ MAX_BLOG_PAGES = 10  # 안 보낸 글을 찾기 위해 읽을 최대 페이지 �
 VIDEO_RECENT_DAYS = 7  # 이 기간 안에 올라온 영상만 '새 영상'으로 보고 전송
 GEMINI_MODEL = "gemini-3.6-flash"
 GEMINI_MAX_RETRIES = 3
+MAX_GEMINI_IMAGES = 5  # Gemini에 함께 넘길 본문 이미지 수
+MAX_DISCORD_IMAGES = 4  # 상세 해설 아래에 붙일 이미지 수 (Discord 갤러리 최대 4장)
+GEMINI_IMAGE_TYPES = ("image/png", "image/jpeg", "image/webp", "image/heic", "image/heif")
 
 HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -40,25 +45,52 @@ client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 # ==========================================
 # 2. 디스코드 메시지 전송
 # ==========================================
-def send_discord_message(label, title, url, summary):
-    """Discord Webhook으로 요약을 전송합니다. 길면 여러 메시지로 나눠 보냅니다."""
+REPORT_SECTIONS = [
+    ("summary", "📝 상세 해설", 0xFF0000),
+    ("background", "💡 AI 추가 배경지식", 0xF1C40F),
+    ("interview", "🎯 기술 면접 예상 질문", 0x3498DB),
+]
+
+
+def _post_discord(embeds):
+    res = requests.post(DISCORD_WEBHOOK_URL, json={"embeds": embeds})
+    if res.status_code not in (200, 204):
+        print(f"디스코드 전송 실패: {res.status_code}, {res.text}")
+        return False
+    return True
+
+
+def send_discord_report(label, title, url, report, image_urls=()):
+    """
+    요약 결과를 섹션별(상세 해설 / 배경지식 / 면접 질문)로 나눠 Discord Webhook으로 전송합니다.
+    상세 해설 메시지 아래에는 이미지를 최대 MAX_DISCORD_IMAGES장 붙입니다.
+    """
     if not DISCORD_WEBHOOK_URL:
         print("DISCORD_WEBHOOK_URL이 설정되지 않아 메시지를 전송하지 못했습니다.")
         return False
 
-    # Embed description 최대 4096자
-    chunks = [summary[i:i + 4000] for i in range(0, len(summary), 4000)] or [""]
+    for section_idx, (key, header, color) in enumerate(REPORT_SECTIONS):
+        text = report.get(key, "").strip()
+        # Embed description 최대 4096자
+        chunks = [text[i:i + 4000] for i in range(0, len(text), 4000)] or [""]
 
-    for idx, chunk in enumerate(chunks):
-        embed = {"description": chunk, "color": 0xFF0000}
-        if idx == 0:
-            embed["title"] = f"{label} {title}"[:256]
-            embed["url"] = url
+        for chunk_idx, chunk in enumerate(chunks):
+            embed = {"description": chunk, "color": color}
+            if chunk_idx == 0:
+                embed["title"] = (f"{label} {title}" if section_idx == 0 else header)[:256]
+                embed["url"] = url
+            if section_idx == 0 and chunk_idx == 0:
+                embed["description"] = f"**{header}**\n\n{chunk}"[:4096]
 
-        res = requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]})
-        if res.status_code not in (200, 204):
-            print(f"디스코드 전송 실패: {res.status_code}, {res.text}")
-            return False
+            embeds = [embed]
+            # 같은 url을 가진 embed는 Discord가 하나의 이미지 갤러리로 묶어서 보여줌
+            if section_idx == 0 and chunk_idx == len(chunks) - 1 and image_urls:
+                embeds[0] = {**embed, "url": url, "image": {"url": image_urls[0]}}
+                embeds += [{"url": url, "image": {"url": u}} for u in image_urls[1:MAX_DISCORD_IMAGES]]
+
+            if not _post_discord(embeds):
+                return False
+            time.sleep(0.5)  # 메시지 순서 보장
 
     print("디스코드 메시지 전송 성공!")
     return True
@@ -118,11 +150,46 @@ def html_to_text(body_html):
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def get_blog_body(slug):
-    """Substack 글 API로 본문 HTML을 가져와 텍스트로 변환합니다."""
+def get_blog_content(slug):
+    """
+    Substack 글 API로 본문을 가져와 (텍스트, 이미지 URL 목록)으로 반환합니다.
+    '(Sponsored)' 제목부터 다음 구분선(<hr>)까지의 광고 구간은 제외합니다.
+    """
     res = requests.get(f"{BLOG_URL}/api/v1/posts/{slug}", headers=HTTP_HEADERS, timeout=20)
     res.raise_for_status()
-    return html_to_text(res.json().get("body_html") or "")
+    body_html = res.json().get("body_html") or ""
+
+    sections = re.split(r"<hr[^>]*>", body_html)
+    body_html = "".join(s for s in sections if "(Sponsored)" not in s)
+
+    image_urls = []
+    for src in re.findall(r'<img[^>]+src="([^"]+)"', body_html):
+        src = html.unescape(src)
+        if src not in image_urls:
+            image_urls.append(src)
+
+    return html_to_text(body_html), image_urls
+
+
+def download_image_parts(image_urls):
+    """이미지를 내려받아 Gemini 입력용 Part로 변환합니다. 지원하지 않는 형식(GIF 등)은 건너뜁니다."""
+    parts = []
+    for image_url in image_urls[:MAX_GEMINI_IMAGES]:
+        try:
+            res = requests.get(
+                image_url,
+                headers={**HTTP_HEADERS, "Accept": "image/jpeg,image/png,image/webp"},
+                timeout=20,
+            )
+            res.raise_for_status()
+            mime_type = res.headers.get("Content-Type", "").split(";")[0]
+            if mime_type not in GEMINI_IMAGE_TYPES:
+                print(f"Gemini 미지원 이미지 형식({mime_type})이라 건너뜁니다: {image_url}")
+                continue
+            parts.append(types.Part.from_bytes(data=res.content, mime_type=mime_type))
+        except Exception as e:
+            print(f"이미지 다운로드 실패({image_url}): {e}")
+    return parts
 
 
 # ==========================================
@@ -132,20 +199,27 @@ SUMMARY_GUIDE = """
     [작성 가이드]
     1. 추상적인 개념 설명은 지양하고, **기술적 메커니즘, 동작 원리, 사용된 기술 스택 및 키워드** 위주로 구체적으로 작성하세요.
     2. 모든 문장은 **`~한다`, `~이다` 형태의 평서체/단정형 어조**로 작성하세요. (예: ~합니다 -> ~한다 / ~입니다 -> ~이다)
-    3. 전체 응답 길이는 공백 포함 **3500자 이내**로 작성하세요. (섹션별 분량은 아래 작성 양식을 따르세요)
+    3. 응답은 JSON으로 하며, 각 필드 값에는 섹션 제목을 넣지 말고 본문만 Discord 마크다운으로 작성하세요.
 """
 
 SUMMARY_FORMAT = """
     [작성 양식]
-    📝 [핵심 요약] (약 1200자)
-    - 주요 기술의 작동 메커니즘, 취약점/특징, 핵심 프로세스를 기술 용어를 사용하여 6~8줄 요약
+    ■ summary: 상세 해설 (공백 포함 약 3500자)
+    - 원문을 읽지 않은 사람도 이해할 수 있도록, 원문의 소제목 흐름을 따라 섹션별로 해설하세요.
+    - 각 섹션은 `**소제목**` 한 줄 뒤에 설명 문단을 쓰세요.
+    - 처음 등장하는 기술 용어는 괄호나 짧은 문장으로 풀어 설명하세요.
+    - 원문에 나온 구체적인 예시, 수치, 비교, 트레이드오프를 생략하지 말고 살리세요.
+    - 첨부된 다이어그램 이미지가 있다면 그 내용도 해설에 반영하세요.
 
-    💡 [AI 추가 배경지식] (약 800자)
-    - 기술 요소 원리, 구조적 한계/특징, 관련 아키텍처 등 심도 있는 기술 배경지식 4~5줄 정리
+    ■ background: AI 추가 배경지식 (공백 포함 약 2000~2500자)
+    - 원문을 이해하는 데 도움이 되는 기술 요소 원리, 구조적 한계/특징, 관련 아키텍처를 정리하세요.
+    - 원문 내용을 반복하지 말고, 원문에 없지만 알아두면 좋은 내용 위주로 작성하세요.
+    - 확실하지 않은 내용은 쓰지 마세요.
 
-    🎯 [기술 면접 예상 질문] (약 1500자)
-    - 실무/아키텍처 수준의 기술 면접 질문 3개와 각각에 대한 힌트, 모범 답안(4~5줄)
+    ■ interview: 기술 면접 예상 질문 (공백 포함 약 3500자)
+    - 실무/아키텍처 수준의 기술 면접 질문 3개와 각각에 대한 힌트, 모범 답안
     - 힌트는 정답을 직접 말하지 않고 답변 방향을 잡아주는 핵심 키워드 2~4개만 ` · `로 구분해 한 줄로 작성하세요.
+    - 모범 답안은 면접에서 그대로 말할 수 있을 만큼 구체적으로 작성하세요.
     - 모범 답안은 Discord 스포일러로 가리기 위해 `||`로 감싸고, 답안 안에서는 줄바꿈하지 마세요.
     - `1.` 같은 번호 목록은 사용하지 말고, 반드시 아래 형식을 그대로 따르세요.
 
@@ -163,7 +237,35 @@ SUMMARY_FORMAT = """
 """
 
 
-def _generate(prompt):
+REPORT_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "summary": {"type": "STRING"},
+        "background": {"type": "STRING"},
+        "interview": {"type": "STRING"},
+    },
+    "required": ["summary", "background", "interview"],
+    "property_ordering": ["summary", "background", "interview"],
+}
+
+
+def _log_token_usage(response):
+    usage = response.usage_metadata
+    if not usage:
+        return
+    print(
+        "Gemini 토큰 사용량 - "
+        f"입력: {usage.prompt_token_count}, "
+        f"출력: {usage.candidates_token_count}, "
+        f"사고: {getattr(usage, 'thoughts_token_count', None) or 0}, "
+        f"합계: {usage.total_token_count}"
+    )
+    for detail in getattr(usage, "prompt_tokens_details", None) or []:
+        print(f"  - 입력 {detail.modality}: {detail.token_count}")
+
+
+def _generate(contents):
+    """Gemini로 요약을 생성해 {summary, background, interview} dict로 반환합니다."""
     if not client:
         raise ValueError("GEMINI_API_KEY가 설정되지 않았습니다.")
 
@@ -171,9 +273,17 @@ def _generate(prompt):
         try:
             response = client.models.generate_content(
                 model=GEMINI_MODEL,
-                contents=prompt
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=REPORT_SCHEMA,
+                ),
             )
-            return response.text.strip()
+            _log_token_usage(response)
+            report = json.loads(response.text)
+            for key, _, _ in REPORT_SECTIONS:
+                print(f"  - {key}: {len(report.get(key, ''))}자")
+            return report
         except Exception as e:
             if attempt < GEMINI_MAX_RETRIES - 1:
                 print(f"Gemini 요약 실패: {e}. {attempt + 1}번째 재시도 중... (3초 대기)")
@@ -188,6 +298,7 @@ def summarize_video_with_gemini(video_title, video_url, video_description):
     prompt = f"""
     당신은 IT/기술 분야의 최고 기술 책임자(CTO) 수준의 전문 컨설턴트이자 기술 면접관입니다.
     아래 유튜브 기술 영상의 정보와 링크 내용을 바탕으로 기술적 깊이가 있는 핵심 분석 보고서를 작성해 주세요.
+    영상 설명란에 근거가 없는 내용을 영상에 나온 것처럼 지어내지 마세요. 정보가 부족하면 summary는 짧아도 됩니다.
     {SUMMARY_GUIDE}
     [영상 정보]
     - 제목: {video_title}
@@ -199,11 +310,11 @@ def summarize_video_with_gemini(video_title, video_url, video_description):
     return _generate(prompt)
 
 
-def summarize_blog_with_gemini(title, body):
-    """Gemini API를 활용하여 블로그 글 본문을 요약합니다."""
+def summarize_blog_with_gemini(title, body, image_urls):
+    """Gemini API를 활용하여 블로그 글 본문과 다이어그램 이미지를 요약합니다."""
     prompt = f"""
     당신은 IT/기술 분야의 최고 기술 책임자(CTO) 수준의 전문 컨설턴트이자 기술 면접관입니다.
-    아래 기술 블로그 글의 본문을 바탕으로 기술적 깊이가 있는 핵심 분석 보고서를 한국어로 작성해 주세요.
+    아래 기술 블로그 글의 본문과 첨부된 다이어그램 이미지를 바탕으로 기술적 깊이가 있는 분석 보고서를 한국어로 작성해 주세요.
     본문 중 (Sponsored) 광고 문단은 무시해 주세요.
     {SUMMARY_GUIDE}
     [글 정보]
@@ -212,7 +323,7 @@ def summarize_blog_with_gemini(title, body):
     {body[:30000]}
     {SUMMARY_FORMAT}
     """
-    return _generate(prompt)
+    return _generate([prompt, *download_image_parts(image_urls)])
 
 
 # ==========================================
@@ -263,9 +374,12 @@ def process_latest_video(channel_id, processed):
     try:
         video_info = get_video_details_from_youtube_api(video_id)
         description = video_info["description"] if video_info else target_item["snippet"].get("description", "")
-        summary = summarize_video_with_gemini(video_title, video_url, description)
+        report = summarize_video_with_gemini(video_title, video_url, description)
 
-        if send_discord_message("🎬", video_title, video_url, summary):
+        thumbnails = target_item["snippet"].get("thumbnails", {})
+        thumbnail = next((thumbnails[k]["url"] for k in ("maxres", "high", "medium") if k in thumbnails), None)
+
+        if send_discord_report("🎬", video_title, video_url, report, [thumbnail] if thumbnail else []):
             record_processed(video_id, processed)
             print(f"성공적으로 처리 완료되어 기록되었습니다: {video_id}")
             return True
@@ -302,10 +416,11 @@ def process_latest_blog_post(processed):
     print(f"요약 대상 블로그 글 발견: '{title}' ({target_post['post_date'][:10]})")
 
     try:
-        body = get_blog_body(slug)
-        summary = summarize_blog_with_gemini(title, body)
+        body, image_urls = get_blog_content(slug)
+        print(f"본문 {len(body)}자, 이미지 {len(image_urls)}장")
+        report = summarize_blog_with_gemini(title, body, image_urls)
 
-        if send_discord_message("📰", title, target_post["canonical_url"], summary):
+        if send_discord_report("📰", title, target_post["canonical_url"], report, image_urls):
             record_processed(BLOG_PREFIX + slug, processed)
             print(f"성공적으로 처리 완료되어 기록되었습니다: {slug}")
             return True
