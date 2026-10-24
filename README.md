@@ -58,8 +58,7 @@ Discord 채널 설정(⚙️) → **연동** → **웹후크** → **새 웹후�
 ## 실행
 
 ### 자동 실행
-- **스케줄**: 매일 UTC 00:00 (한국시간 09:00)
-- **push**: `main` / `master` 브랜치에 push할 때마다 1회 실행 (`auto` 모드)
+매일 UTC 00:00 (한국시간 09:00)에 `auto` 모드로 실행됩니다. push로는 실행되지 않습니다.
 
 ### 수동 실행
 **Actions → Daily YouTube Summarizer → Run workflow**에서 실행 대상을 선택할 수 있습니다.

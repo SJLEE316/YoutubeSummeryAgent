@@ -10,10 +10,6 @@ on:
         type: choice
         options: [auto, blog, video]
         default: auto
-  push:
-    branches:
-      - main
-      - master # master 브랜치 푸시도 감지하도록 추가
 
 # 블로그/영상 실행이 겹쳐도 processed_videos.txt 커밋이 충돌하지 않도록 순서대로 실행
 concurrency:
@@ -44,7 +40,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          # 수동 실행이면 선택값, 그 외(스케줄, push)는 auto
+          # 수동 실행이면 선택값, 스케줄 실행은 auto
           RUN_MODE: ${{ inputs.run_mode || 'auto' }}
         run: python main.py
 
