@@ -22,6 +22,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 RUN_MODE = os.environ.get("RUN_MODE", "auto")  # auto | blog | video
+USE_GEMINI_IMAGES = os.environ.get("USE_GEMINI_IMAGES", "true").lower() != "false"
 KST = timezone(timedelta(hours=9))
 
 PROCESSED_FILE = "processed_videos.txt"
@@ -326,6 +327,9 @@ def summarize_blog_with_gemini(title, body, image_urls):
     {body[:30000]}
     {SUMMARY_FORMAT}
     """
+    if not USE_GEMINI_IMAGES:
+        print("이미지 사용 안 함 설정: 본문 텍스트만으로 요약합니다.")
+        return _generate(prompt)
     return _generate([prompt, *download_image_parts(image_urls)])
 
 

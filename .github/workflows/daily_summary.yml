@@ -10,6 +10,10 @@ on:
         type: choice
         options: [auto, blog, video]
         default: auto
+      use_images:
+        description: "본문 이미지를 Gemini에 함께 전달 (끄면 텍스트만으로 요약, Discord 이미지는 그대로 표시)"
+        type: boolean
+        default: true
 
 # 블로그/영상 실행이 겹쳐도 processed_videos.txt 커밋이 충돌하지 않도록 순서대로 실행
 concurrency:
@@ -42,6 +46,8 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           # 수동 실행이면 선택값, 스케줄 실행은 auto
           RUN_MODE: ${{ inputs.run_mode || 'auto' }}
+          # 스케줄 실행은 항상 이미지 사용, 수동 실행은 체크박스 값
+          USE_GEMINI_IMAGES: ${{ github.event_name != 'workflow_dispatch' || inputs.use_images }}
         run: python main.py
 
       - name: 처리된 영상 기록 저장 (Git Commit)
