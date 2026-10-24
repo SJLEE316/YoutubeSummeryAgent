@@ -2,12 +2,23 @@ name: Daily YouTube Summarizer
 
 on:
   schedule:
-    - cron: "0 0 * * 0,1,3,5" # 월, 수, 금, 일요일 한국시간 아침 9시 (UTC 00:00)
+    - cron: "0 0 * * *" # 매일 한국시간 아침 9시 (UTC 00:00), 일요일은 새 영상 우선
   workflow_dispatch: # <- 수동 실행 버튼을 활성화하는 필수 옵션!
+    inputs:
+      run_mode:
+        description: "실행 대상 (auto: 일요일은 영상 우선, 그 외 블로그)"
+        type: choice
+        options: [auto, blog, video]
+        default: auto
   push:
     branches:
       - main
       - master # master 브랜치 푸시도 감지하도록 추가
+
+# 블로그/영상 실행이 겹쳐도 processed_videos.txt 커밋이 충돌하지 않도록 순서대로 실행
+concurrency:
+  group: summarizer
+  cancel-in-progress: false
 
 jobs:
   build-and-run:
@@ -15,6 +26,8 @@ jobs:
     steps:
       - name: 저장소 체크아웃
         uses: actions/checkout@v3
+        with:
+          ref: ${{ github.ref }} # 앞선 실행이 push한 최신 기록을 받아오기 위해 브랜치 최신 커밋 사용
 
       - name: Python 환경 설정
         uses: actions/setup-python@v4
@@ -30,12 +43,9 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
-          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
-          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
-          KAKAO_SEND_MODE: ${{ secrets.KAKAO_SEND_MODE }}
-          KAKAO_TARGET_UUID: ${{ secrets.KAKAO_TARGET_UUID }}
-
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # 수동 실행이면 선택값, 그 외(스케줄, push)는 auto
+          RUN_MODE: ${{ inputs.run_mode || 'auto' }}
         run: python main.py
 
       - name: 처리된 영상 기록 저장 (Git Commit)

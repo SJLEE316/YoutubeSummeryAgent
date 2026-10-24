@@ -1,4 +1,3 @@
-feedparser
 google-genai
 google-api-python-client
 requests
