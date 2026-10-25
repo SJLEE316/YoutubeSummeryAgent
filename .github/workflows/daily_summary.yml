@@ -2,11 +2,11 @@ name: Daily YouTube Summarizer
 
 on:
   schedule:
-    - cron: "17 21 * * *" # 매일 한국시간 아침 6시 17분 (UTC 전날 21:17, 붐비는 정각/30분 회피), 일요일은 새 영상 우선
+    - cron: "17 21 * * 0-4,6" # 한국시간 일~금 아침 6시 17분 (UTC 전날 21:17, 붐비는 정각/30분 회피), 토요일은 스터디 요약 날이라 제외
   workflow_dispatch: # <- 수동 실행 버튼을 활성화하는 필수 옵션!
     inputs:
       run_mode:
-        description: "실행 대상 (auto: 일요일은 영상 우선, 그 외 블로그)"
+        description: "실행 대상 (auto: 월~금 블로그, 일요일 영상, 토요일 쉼)"
         type: choice
         options: [auto, blog, video]
         default: auto

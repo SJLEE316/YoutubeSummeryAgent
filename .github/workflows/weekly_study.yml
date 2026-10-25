@@ -1,0 +1,52 @@
+name: Weekly System Design Study
+
+on:
+  schedule:
+    - cron: "43 22 * * 5" # 매주 토요일 한국시간 아침 7시 43분 (UTC 금요일 22:43, 붐비는 정각/30분 회피)
+  workflow_dispatch:
+    inputs:
+      test_chapter:
+        description: "테스트할 장 번호 (비우면 다음 차례 예습/복습 전송, 입력하면 해당 장을 기록 없이 전송)"
+        type: string
+        default: ""
+
+# 매일 요약 봇과 같은 그룹으로 묶어 기록 파일 커밋이 충돌하지 않도록 순서대로 실행
+concurrency:
+  group: summarizer
+  cancel-in-progress: false
+
+jobs:
+  build-and-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Python 환경 설정
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: 라이브러리 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 스터디 요약 스크립트 실행
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.STUDY_DISCORD_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STUDY_TEST_CHAPTER: ${{ inputs.test_chapter }}
+        run: python study_digest.py
+
+      - name: 진행 기록 저장 (Git Commit)
+        if: always() && !inputs.test_chapter
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          touch study_progress.txt
+          git add study_progress.txt
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update study progress" && git push)

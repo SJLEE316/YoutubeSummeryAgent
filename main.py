@@ -29,7 +29,8 @@ PROCESSED_FILE = "processed_videos.txt"
 BLOG_PREFIX = "blog:"  # 블로그 글은 영상 ID와 구분하기 위해 접두어를 붙여 기록
 BLOG_PAGE_SIZE = 12
 MAX_BLOG_PAGES = 10  # 안 보낸 글을 찾기 위해 읽을 최대 페이지 수
-VIDEO_RECENT_DAYS = 7  # 이 기간 안에 올라온 영상만 '새 영상'으로 보고 전송
+VIDEO_RECENT_DAYS = 30  # 이 기간 안에 올라온 안 보낸 영상 중 가장 오래된 것부터 전송 (주 1회라 밀린 영상 누락 방지)
+VIDEO_FETCH_COUNT = 50  # 확인할 최근 업로드 수 (API 1회 최대 50개)
 GEMINI_MODEL = "gemini-3.6-flash"
 GEMINI_RETRY_DELAYS = [30, 60, 120, 240]  # 재시도 전 대기 시간(초), 최초 시도 포함 최대 5번 시도
 FALLBACK_RETRY_DELAYS = [30, 60]  # 예비 모델 재시도 전 대기 시간(초)
@@ -65,16 +66,16 @@ def _post_discord(embeds):
     return True
 
 
-def send_discord_report(label, title, url, report, image_urls=()):
+def send_discord_report(label, title, url, report, image_urls=(), sections=REPORT_SECTIONS):
     """
-    요약 결과를 섹션별(상세 해설 / 배경지식 / 면접 질문)로 나눠 Discord Webhook으로 전송합니다.
+    요약 결과를 섹션별(기본: 상세 해설 / 배경지식 / 면접 질문)로 나눠 Discord Webhook으로 전송합니다.
     상세 해설 메시지 아래에는 이미지를 최대 MAX_DISCORD_IMAGES장 붙입니다.
     """
     if not DISCORD_WEBHOOK_URL:
         print("DISCORD_WEBHOOK_URL이 설정되지 않아 메시지를 전송하지 못했습니다.")
         return False
 
-    for section_idx, (key, header, color) in enumerate(REPORT_SECTIONS):
+    for section_idx, (key, header, color) in enumerate(sections):
         text = report.get(key, "").strip()
         # Embed description 최대 4096자
         chunks = [text[i:i + 4000] for i in range(0, len(text), 4000)] or [""]
@@ -269,7 +270,7 @@ def _log_token_usage(response):
         print(f"  - 입력 {detail.modality}: {detail.token_count}")
 
 
-def _call_gemini(model, contents, retry_delays):
+def _call_gemini(model, contents, retry_delays, schema):
     """지정한 모델로 요약을 생성합니다. 실패하면 retry_delays 간격으로 재시도합니다."""
     for attempt in range(len(retry_delays) + 1):
         try:
@@ -278,13 +279,13 @@ def _call_gemini(model, contents, retry_delays):
                 contents=contents,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    response_schema=REPORT_SCHEMA,
+                    response_schema=schema,
                 ),
             )
             print(f"요약 모델: {model}")
             _log_token_usage(response)
             report = json.loads(response.text)
-            for key, _, _ in REPORT_SECTIONS:
+            for key in schema["required"]:
                 print(f"  - {key}: {len(report.get(key, ''))}자")
             return report
         except Exception as e:
@@ -332,23 +333,23 @@ def find_fallback_models():
     return candidates[:MAX_FALLBACK_MODELS]
 
 
-def _generate(contents):
+def _generate(contents, schema=REPORT_SCHEMA):
     """
-    Gemini로 요약을 생성해 {summary, background, interview} dict로 반환합니다.
+    Gemini로 요약을 생성해 schema 필드(기본: summary, background, interview) dict로 반환합니다.
     기본 모델이 503(과부하) 등으로 계속 실패하면 예비 모델로 넘어갑니다.
     """
     if not client:
         raise ValueError("GEMINI_API_KEY가 설정되지 않았습니다.")
 
     try:
-        return _call_gemini(GEMINI_MODEL, contents, GEMINI_RETRY_DELAYS)
+        return _call_gemini(GEMINI_MODEL, contents, GEMINI_RETRY_DELAYS, schema)
     except Exception as e:
         first_error = e
 
     for model in find_fallback_models():
         print(f"예비 모델로 전환: {model}")
         try:
-            return _call_gemini(model, contents, FALLBACK_RETRY_DELAYS)
+            return _call_gemini(model, contents, FALLBACK_RETRY_DELAYS, schema)
         except Exception:
             continue
 
@@ -409,7 +410,7 @@ def record_processed(item_id, processed):
 
 
 def process_latest_video(channel_id, processed):
-    """채널의 최근 VIDEO_RECENT_DAYS일 이내 미처리 영상 1개를 요약해 전송합니다."""
+    """채널의 최근 VIDEO_RECENT_DAYS일 이내 미처리 영상 중 가장 오래된 1개를 요약해 전송합니다."""
     # UC 접두사를 UU로 바꿔 업로드 재생목록 ID 생성 (최신 업로드 순)
     clean_id = channel_id.strip()
     uploads_playlist_id = "UU" + clean_id[2:] if clean_id.startswith("UC") else clean_id
@@ -419,15 +420,16 @@ def process_latest_video(channel_id, processed):
         items = youtube.playlistItems().list(
             playlistId=uploads_playlist_id,
             part="snippet,contentDetails",
-            maxResults=10,
+            maxResults=VIDEO_FETCH_COUNT,
         ).execute().get("items", [])
     except Exception as e:
         report_error(f"⚠️ 채널({channel_id}) API 요청 중 오류: {e}")
         return False
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=VIDEO_RECENT_DAYS)
+    # 업로드 목록은 최신순이므로 뒤에서부터(가장 오래된 것부터) 확인
     target_item = None
-    for item in items:
+    for item in reversed(items):
         video_id = item["contentDetails"]["videoId"]
         published = item["contentDetails"].get("videoPublishedAt") or item["snippet"]["publishedAt"]
         published_at = datetime.fromisoformat(published.replace("Z", "+00:00"))
@@ -512,15 +514,19 @@ def main():
 
     has_processed = False
 
-    # auto: 일요일(한국시간)이면 새 영상을 먼저 확인하고, 영상을 보냈으면 블로그는 보내지 않음 (하루 1개)
-    is_sunday = datetime.now(KST).weekday() == 6
-    if RUN_MODE == "video" or (RUN_MODE == "auto" and is_sunday):
+    # auto: 월~금(한국시간)은 블로그, 일요일은 새 영상만 (없으면 보내지 않음), 토요일은 스터디 요약(study_digest.py) 날이라 쉼
+    weekday = datetime.now(KST).weekday()
+    if RUN_MODE == "auto" and weekday == 5:
+        print("토요일은 스터디 요약을 보내는 날이라 블로그/영상을 보내지 않습니다.")
+        return
+
+    if RUN_MODE == "video" or (RUN_MODE == "auto" and weekday == 6):
         for channel_id in CHANNEL_IDS:
             if process_latest_video(channel_id, processed):
                 has_processed = True
                 break
 
-    if RUN_MODE == "blog" or (RUN_MODE == "auto" and not has_processed):
+    if RUN_MODE == "blog" or (RUN_MODE == "auto" and weekday < 5):
         has_processed = process_latest_blog_post(processed)
 
     if errors:
